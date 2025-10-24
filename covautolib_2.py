@@ -29,25 +29,28 @@ import string
 
 
 # InsecureRequestWarning: 対策
-#  Unverified HTTPS request is being made to host 'bypsproxy.daikin.co.jp'.
+#  Unverified HTTPS request is being made to proxy host.
 #  Adding certificate verification is strongly advised.
 #  See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html
 urllib3.disable_warnings(InsecureRequestWarning)
 
-# Windows/Linux
-os.environ["http_proxy"] = "http://gwproxy.daikin.co.jp:3128/"
-os.environ["https_proxy"] = "http://gwproxy.daikin.co.jp:3128/"
+# プロキシ設定を環境変数から取得
+# 環境変数が設定されていない場合は、プロキシなしで動作します
+HTTP_PROXY = os.environ.get("HTTP_PROXY", "")
+HTTPS_PROXY = os.environ.get("HTTPS_PROXY", "")
+
+if HTTP_PROXY:
+    os.environ["http_proxy"] = HTTP_PROXY
+if HTTPS_PROXY:
+    os.environ["https_proxy"] = HTTPS_PROXY
 
 # proxies
 gwproxies_dic = {
-    "http": "http://gwproxy.daikin.co.jp:3128/",
-    "https": "http://gwproxy.daikin.co.jp:3128/",
-}
+    "http": HTTP_PROXY,
+    "https": HTTPS_PROXY,
+} if HTTP_PROXY else {}
 
-bypsproxies_dic = {
-    "http": "http://bypsproxy.daikin.co.jp:3128/",
-    "https": "http://bypsproxy.daikin.co.jp:3128/",
-}
+bypsproxies_dic = gwproxies_dic  # 同じプロキシ設定を使用
 
 # os.sep は、Windows: \\, Linux: /
 sep = os.sep
@@ -413,8 +416,10 @@ class GLMail:
 
         TO_CC_ADDRESS = self.to_address + self.cc_address
         print(TO_CC_ADDRESS, type(TO_CC_ADDRESS))
-        HOST = "smtp.daikin.co.jp"
-        PORT = 25
+        
+        # SMTP設定を環境変数から取得
+        HOST = os.environ.get("SMTP_HOST", "localhost")
+        PORT = int(os.environ.get("SMTP_PORT", "25"))
 
         msg = MIMEMultipart("alternative")  # HTML
         msg["Subject"] = self.subject
@@ -459,42 +464,36 @@ class COVProj:
         入力: グループ名、プロジェクト名、ブランチ名、コミットメッセージ
         出力: インスタンス内グループ名、プロジェクト名、ブランチ名、コミットメッセージ、
               ディレクトリ名（基底、共有、コンフィグ、アドレス、認証キー）
-              ※1 認証キーは、共有ディレクトリに置いてはいけない（Sドライブは所有者をvulsから変更できないので置けない）
+              ※1 認証キーは、共有ディレクトリに置いてはいけない
         """
         # 環境判断
         if os.name == "nt":
-            # Windows10
+            # Windows
             if not __debug__:
                 # -O オプションありでデバッグ（__debug__: false）
-                base_dir = "C:\\Users\\shimatani\\Docs\\GitLab\\shimatani\\cov_auto\\"
-
+                base_dir = os.environ.get(
+                    "COV_BASE_DIR",
+                    os.path.join(os.path.expanduser("~"), "cov_auto")
+                ) + "\\"
             else:
                 # -O オプションなし（__debug__: true）
                 base_dir = "C:\\cov\\"
 
-            # 共有ディレクトリ
-            share_dir = (
-                "S:\\空調生産本部ITソリューション開発Ｇ\\開発g\\脆弱性情報\\coverity\\"
-            )
+            # 共有ディレクトリ（環境変数から取得）
+            share_dir = os.environ.get("COV_SHARE_DIR", "") + "\\"
 
-            # Proxy
-            # Windows10
-            os.environ["http_proxy"] = "http://bypsproxy.daikin.co.jp:3128/"
-            os.environ["https_proxy"] = "http://bypsproxy.daikin.co.jp:3128/"
+            # Proxy（環境変数から取得済み）
+            # Windows の場合、必要に応じて HTTP_PROXY を設定してください
 
         else:
-            # AlmaLinux
-            base_dir = "/cov/"
+            # Linux
+            base_dir = os.environ.get("COV_BASE_DIR", "/cov/")
 
-            # 共有ディレクトリ
-            share_dir = (
-                "/mnt/z/空調生産本部ITソリューション開発Ｇ/開発g/脆弱性情報/coverity/"
-            )
+            # 共有ディレクトリ（環境変数から取得）
+            share_dir = os.environ.get("COV_SHARE_DIR", "") + "/"
 
-            # Proxy
-            # Linux も kbits 接続時は bypsproxy
-            os.environ["http_proxy"] = "http://bypsproxy.daikin.co.jp:3128/"
-            os.environ["https_proxy"] = "http://bypsproxy.daikin.co.jp:3128/"
+            # Proxy（環境変数から取得済み）
+            # Linux の場合、必要に応じて HTTP_PROXY を設定してください
 
         # セパレータは、Windows: \\, Linux: /
         sep = os.sep
@@ -545,7 +544,7 @@ class LOGGER:
     機能: ログ採取（画面とファイルの両方に出力可能）
     入力: ログファイルのヘッダ名、COVProj クラスのインスタンス
     出力: ファイル名: header_group_project_branch-YYYYMMDDhhmmss.log
-        (例) covauto_shimatani_cov_auto_main-20221228114113.log
+        (例) covauto_mygroup_myproject_main-20221228114113.log
         形式:
         2022-12-28 11:41:13 - covauto - DEBUG - [config] COV-CONFIGURE_OP: --python --version 3
         2022-12-28 11:41:13 - covauto - ERROR - [GIT] git fetch で ...
@@ -693,10 +692,12 @@ class COVApi:
         """
         引数のデフォルト値をNoneに設定し、複数のコンストラクタに対応する
         """
-        # [API reference Swagger のページ](https://sast.kbit-repo.net/swagger/api/v2/index.html)
-
-        # API base url
-        self.API_BASE = "https://sast.kbit-repo.net/api/v2"
+        # API base url（環境変数から取得）
+        # 例: https://your-coverity-server.example.com/api/v2
+        self.API_BASE = os.environ.get(
+            "COVERITY_URL",
+            "https://coverity.example.com"
+        ) + "/api/v2"
 
         # GET /issues/columns
         # API の分類 Issues から GET /issues/columns を使い CID、CategoryとImpact列の列キーを取得する
